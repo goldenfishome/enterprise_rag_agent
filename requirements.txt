@@ -1,0 +1,34 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+pydantic==2.7.0
+
+# LLM & Embeddings
+openai==1.40.0
+cohere==5.5.0
+langchain==0.2.12
+langchain-openai==0.1.22
+langchain-community==0.2.12
+
+# Vector Store
+qdrant-client==1.10.1
+
+# Cache
+redis[asyncio]==5.0.8
+
+# Chunking & Embeddings
+sentence-transformers==3.0.1
+tiktoken==0.7.0
+
+# Evaluation
+ragas==0.1.14
+datasets==2.20.0
+
+# Load Testing
+locust==2.29.1
+
+# Utilities
+python-dotenv==1.0.1
+httpx==0.27.0
+numpy==1.26.4
+pandas==2.2.2
+tqdm==4.66.4
