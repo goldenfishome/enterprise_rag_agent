@@ -1,19 +1,19 @@
 """
 evaluation/evaluator.py
 -----------------------
-RAG效果评估器：量化简历中的数据指标。
-对应简历：
+RAG quality evaluator: quantify the metrics cited in the resume.
+Corresponding resume claims:
 - Improved answer relevance by 25%
 - Reducing hallucination rate by 31%
 
-评估指标：
-1. Recall@K：前K个结果中包含ground-truth的比例
-2. MRR@K：Mean Reciprocal Rank
-3. NDCG@K：归一化折损累积增益（综合排序质量）
-4. Hallucination Rate：LLM-as-judge判断答案是否有文档支撑
-5. Answer Relevance：人工/LLM评估答案与问题的相关性
+Evaluation metrics:
+1. Recall@K: Proportion of ground-truth documents included in the top K results
+2. MRR@K: Mean Reciprocal Rank
+3. NDCG@K: Normalized Discounted Cumulative Gain (overall ranking quality)
+4. Hallucination Rate: An LLM judge determines whether documents support the answer
+5. Answer Relevance: Human/LLM assessment of the answer's relevance to the question
 
-使用方式：
+Usage:
     evaluator = RAGEvaluator(agent, llm_judge_client)
     results = await evaluator.run_eval(test_dataset)
     evaluator.print_report(results)
@@ -33,35 +33,35 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EvalSample:
-    """单条评估样本（ground-truth QA pair）。"""
+    """A single evaluation sample (ground-truth QA pair)."""
     query: str
     ground_truth_answer: str
-    relevant_doc_ids: list[str]       # 相关文档ID列表
+    relevant_doc_ids: list[str]       # List of relevant document IDs
     tenant_id: str = "eval_tenant"
     use_case: str = "kb_qa"
 
 
 @dataclass
 class EvalResult:
-    """单样本评估结果。"""
+    """Evaluation result for a single sample."""
     query: str
     predicted_answer: str
     retrieved_doc_ids: list[str]
     recall_at_5: float
     mrr_at_5: float
-    is_hallucination: bool            # True = 答案无文档支撑
-    answer_relevance_score: float     # 0-1，LLM-as-judge评分
+    is_hallucination: bool            # True = the answer is unsupported by documents
+    answer_relevance_score: float     # 0-1, scored by an LLM judge
     latency_ms: int
 
 
 @dataclass
 class EvalReport:
-    """整体评估报告（汇总指标）。"""
+    """Overall evaluation report (aggregated metrics)."""
     n_samples: int
     recall_at_5: float
     mrr_at_5: float
     ndcg_at_5: float
-    hallucination_rate: float         # 幻觉率 = 幻觉样本数 / 总样本数
+    hallucination_rate: float         # Hallucination rate = hallucinated samples / total samples
     avg_answer_relevance: float
     avg_latency_ms: float
     p95_latency_ms: float
@@ -69,14 +69,14 @@ class EvalReport:
 
 class RAGEvaluator:
     """
-    端到端RAG评估器。
-    使用LLM-as-judge评估幻觉率和答案相关性（无需人工标注）。
+    End-to-end RAG evaluator.
+    Use an LLM judge to assess hallucination rate and answer relevance (no manual annotation required).
 
-    评估流程：
-    1. 对每个测试样本运行Agent（检索+生成）
-    2. 对比检索结果与ground-truth相关文档（计算Recall/MRR/NDCG）
-    3. 用LLM判断答案是否由文档支撑（幻觉率）
-    4. 用LLM评估答案与问题的相关性（0-1分）
+    Evaluation workflow:
+    1. Run the agent on each test sample (retrieval + generation)
+    2. Compare retrieved results with ground-truth relevant documents (calculate Recall/MRR/NDCG)
+    3. Use an LLM to determine whether documents support the answer (hallucination rate)
+    4. Use an LLM to assess the answer's relevance to the question (0-1 score)
     """
 
     def __init__(self, agent, openai_api_key: str):
@@ -84,16 +84,16 @@ class RAGEvaluator:
         self.judge = AsyncOpenAI(api_key=openai_api_key)
 
     # ─────────────────────────────────────────
-    # 主评估入口
+    # Main evaluation entry point
     # ─────────────────────────────────────────
     async def run_eval(
         self,
         dataset: list[EvalSample],
-        concurrency: int = 5,  # 并发评估数（避免Rate Limit）
+        concurrency: int = 5,  # Number of concurrent evaluations (avoid rate limits)
     ) -> EvalReport:
         """
-        对整个测试集运行评估。
-        concurrency：同时评估的样本数（平衡速度与API限制）
+        Run evaluation on the entire test set.
+        concurrency: Number of samples evaluated simultaneously (balance speed and API limits)
         """
         semaphore = asyncio.Semaphore(concurrency)
         tasks = [
@@ -109,12 +109,12 @@ class RAGEvaluator:
         sample: EvalSample,
         semaphore: asyncio.Semaphore,
     ) -> EvalResult:
-        """评估单条样本。"""
+        """Evaluate a single sample."""
         async with semaphore:
             import time
             t0 = time.perf_counter()
 
-            # 运行Agent
+            # Run the agent
             response = await self.agent.run(sample.query, sample.tenant_id)
             latency_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -126,11 +126,11 @@ class RAGEvaluator:
                 s.get("content", "") for s in response.get("sources", [])
             ]
 
-            # 检索指标
+            # Retrieval metrics
             recall = self._recall_at_k(retrieved_ids, sample.relevant_doc_ids, k=5)
             mrr = self._mrr_at_k(retrieved_ids, sample.relevant_doc_ids, k=5)
 
-            # 并行评估：幻觉检测 + 答案相关性
+            # Evaluate in parallel: hallucination detection + answer relevance
             hallucination_task = asyncio.create_task(
                 self._judge_hallucination(
                     sample.query, predicted_answer, context_texts
@@ -155,7 +155,7 @@ class RAGEvaluator:
             )
 
     # ─────────────────────────────────────────
-    # LLM-as-Judge：幻觉检测
+    # LLM-as-Judge: hallucination detection
     # ─────────────────────────────────────────
     async def _judge_hallucination(
         self,
@@ -164,26 +164,26 @@ class RAGEvaluator:
         context_texts: list[str],
     ) -> bool:
         """
-        用LLM判断答案是否有文档依据。
-        返回True表示是幻觉（答案内容在context中找不到支撑）。
+        Use an LLM to determine whether the answer is supported by documents.
+        Return True for a hallucination (the answer's content is unsupported by the context).
 
-        这是简历中"幻觉率从16%降到11%"的计算依据。
+        This is the basis for calculating the resume claim "hallucination rate reduced from 16% to 11%".
         """
-        context = "\n\n".join(f"[文档{i+1}]: {t}" for i, t in enumerate(context_texts))
-        prompt = f"""你是一个严格的RAG质量评估员。
+        context = "\n\n".join(f"[Document {i+1}]: {t}" for i, t in enumerate(context_texts))
+        prompt = f"""You are a strict RAG quality evaluator.
 
-问题：{query}
+Question: {query}
 
-检索到的文档：
+Retrieved documents:
 {context}
 
-模型回答：
+Model answer:
 {answer}
 
-请判断：模型回答中的关键信息是否都有上述文档的支撑？
-- 如果回答包含文档中没有的信息（即幻觉），回复：HALLUCINATION
-- 如果回答完全基于文档内容，回复：GROUNDED
-只回复一个词，不要其他内容。"""
+Determine whether all key information in the model answer is supported by the documents above.
+- If the answer contains information absent from the documents (a hallucination), reply: HALLUCINATION
+- If the answer is entirely based on the document content, reply: GROUNDED
+Reply with only one word and nothing else."""
 
         resp = await self.judge.chat.completions.create(
             model="gpt-4o-mini",
@@ -195,26 +195,26 @@ class RAGEvaluator:
         return "HALLUCINATION" in verdict
 
     # ─────────────────────────────────────────
-    # LLM-as-Judge：答案相关性评分
+    # LLM-as-Judge: answer relevance scoring
     # ─────────────────────────────────────────
     async def _judge_relevance(self, query: str, answer: str) -> float:
         """
-        用LLM给答案相关性打分（0-10分，归一化到0-1）。
-        这是简历中"answer relevance提升25%"的计算依据。
+        Use an LLM to score answer relevance (0-10, normalized to 0-1).
+        This is the basis for calculating the resume claim "answer relevance improved by 25%".
         """
-        prompt = f"""请评估以下回答对于给定问题的相关性和有用性。
+        prompt = f"""Evaluate the relevance and usefulness of the following answer to the given question.
 
-问题：{query}
-回答：{answer}
+Question: {query}
+Answer: {answer}
 
-评分标准（0-10分）：
-- 10分：完全回答问题，信息准确完整
-- 7-9分：基本回答问题，有少量遗漏
-- 4-6分：部分相关，但不够全面或有偏差
-- 1-3分：回答与问题相关性低
-- 0分：完全不相关或拒绝回答
+Scoring criteria (0-10):
+- 10: Fully answers the question with accurate, complete information
+- 7-9: Mostly answers the question with minor omissions
+- 4-6: Partially relevant, but incomplete or off target
+- 1-3: The answer has little relevance to the question
+- 0: Completely irrelevant or refuses to answer
 
-只回复一个数字（0-10），不要其他内容。"""
+Reply with only a number (0-10) and nothing else."""
 
         try:
             resp = await self.judge.chat.completions.create(
@@ -227,16 +227,16 @@ class RAGEvaluator:
             score = float(score_str) / 10.0
             return max(0.0, min(1.0, score))
         except (ValueError, Exception):
-            return 0.5  # 解析失败时返回中性分
+            return 0.5  # Return a neutral score if parsing fails
 
     # ─────────────────────────────────────────
-    # 检索指标计算
+    # Retrieval metric calculations
     # ─────────────────────────────────────────
     @staticmethod
     def _recall_at_k(
         retrieved: list[str], relevant: list[str], k: int = 5
     ) -> float:
-        """Recall@K：前K个检索结果中，命中了多少个相关文档。"""
+        """Recall@K: How many relevant documents appear in the top K retrieval results."""
         if not relevant:
             return 1.0
         retrieved_k = set(retrieved[:k])
@@ -247,7 +247,7 @@ class RAGEvaluator:
     def _mrr_at_k(
         retrieved: list[str], relevant: list[str], k: int = 5
     ) -> float:
-        """MRR@K：第一个相关文档出现的位置的倒数。"""
+        """MRR@K: The reciprocal of the rank of the first relevant document."""
         relevant_set = set(relevant)
         for rank, doc_id in enumerate(retrieved[:k], 1):
             if doc_id in relevant_set:
@@ -255,7 +255,7 @@ class RAGEvaluator:
         return 0.0
 
     # ─────────────────────────────────────────
-    # 汇总报告
+    # Aggregate report
     # ─────────────────────────────────────────
     @staticmethod
     def _aggregate(results: list[EvalResult]) -> EvalReport:
@@ -267,7 +267,7 @@ class RAGEvaluator:
             n_samples=len(results),
             recall_at_5=round(np.mean([r.recall_at_5 for r in results]), 4),
             mrr_at_5=round(np.mean([r.mrr_at_5 for r in results]), 4),
-            ndcg_at_5=round(np.mean([r.recall_at_5 for r in results]), 4),  # 简化近似
+            ndcg_at_5=round(np.mean([r.recall_at_5 for r in results]), 4),  # Simplified approximation
             hallucination_rate=round(
                 sum(r.is_hallucination for r in results) / len(results), 4
             ),
@@ -279,7 +279,7 @@ class RAGEvaluator:
         )
 
     def print_report(self, report: EvalReport):
-        """打印格式化评估报告。"""
+        """Print a formatted evaluation report."""
         print("\n" + "="*55)
         print("  RAG Evaluation Report")
         print("="*55)

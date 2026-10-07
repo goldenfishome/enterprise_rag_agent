@@ -1,22 +1,22 @@
 """
 ingestion/embedder.py
 ---------------------
-DomainEmbedder：embedding优化，包含HyDE查询扩展。
-对应简历：retrieval pipeline tuning (embedding optimization) → 25% relevance improvement
+DomainEmbedder: Embedding optimization, including HyDE query expansion.
+Resume reference: retrieval pipeline tuning (embedding optimization) → 25% relevance improvement
 
-优化对比（内部评估集，NDCG@10）：
+Optimization comparison (internal evaluation set, NDCG@10):
 ┌───────────────────────────────────┬──────────┐
-│ 方案                               │ NDCG@10  │
+│ Approach                          │ NDCG@10  │
 ├───────────────────────────────────┼──────────┤
-│ text-embedding-ada-002（基线）     │  0.71    │
+│ text-embedding-ada-002 (baseline)  │  0.71    │
 │ text-embedding-3-large            │  0.76    │
-│ text-embedding-3-large + HyDE     │  0.83    │  ← 最终方案
+│ text-embedding-3-large + HyDE     │  0.83    │  ← Final approach
 └───────────────────────────────────┴──────────┘
 
-HyDE（Hypothetical Document Embeddings）原理：
-- 问题：用户查询（问句）和文档（答句）在embedding空间存在语义鸿沟
-- 方案：先用LLM生成"假设性答案"，再对 query+假设答案 做embedding
-- 效果：embedding更接近文档分布，相似度计算更准确
+How HyDE (Hypothetical Document Embeddings) works:
+- Problem: user queries (questions) and documents (answers) have a semantic gap in embedding space
+- Approach: first generate a "hypothetical answer" with an LLM, then embed query+hypothetical answer
+- Result: embeddings are closer to the document distribution, improving similarity calculations
 """
 
 import asyncio
@@ -30,12 +30,12 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────
-# 全局共享HTTP连接池（关键优化：避免重复建立TCP连接）
+# Globally shared HTTP connection pool (key optimization: avoid repeated TCP connection setup)
 # ─────────────────────────────────────────────────────
 _shared_http_client = httpx.AsyncClient(
     limits=httpx.Limits(
-        max_connections=100,       # 最大并发连接数
-        max_keepalive_connections=20,  # 保持长连接数
+        max_connections=100,       # Maximum concurrent connections
+        max_keepalive_connections=20,  # Number of keep-alive connections
     ),
     timeout=httpx.Timeout(30.0),
 )
@@ -43,8 +43,8 @@ _shared_http_client = httpx.AsyncClient(
 
 class DomainEmbedder:
     """
-    企业RAG场景的Embedding客户端。
-    支持HyDE查询扩展和批量embedding（ingestion阶段）。
+    Embedding client for enterprise RAG use cases.
+    Supports HyDE query expansion and batch embedding (during ingestion).
     """
 
     def __init__(
@@ -53,7 +53,7 @@ class DomainEmbedder:
         model: str = "text-embedding-3-large",
         hyde_model: str = "gpt-4o-mini",
         hyde_max_tokens: int = 150,
-        dimensions: int = 1536,   # text-embedding-3-large支持降维
+        dimensions: int = 1536,   # text-embedding-3-large supports dimension reduction
     ):
         self.model = model
         self.hyde_model = hyde_model
@@ -61,14 +61,14 @@ class DomainEmbedder:
         self.dimensions = dimensions
         self.client = AsyncOpenAI(
             api_key=api_key,
-            http_client=_shared_http_client,  # 复用连接池
+            http_client=_shared_http_client,  # Reuse the connection pool
         )
 
     # ─────────────────────────────────────────
-    # 标准Query Embedding（无HyDE）
+    # Standard query embedding (without HyDE)
     # ─────────────────────────────────────────
     async def embed_query(self, query: str) -> list[float]:
-        """对原始查询做embedding（HyDE=False场景使用）。"""
+        """Embed the original query (used when HyDE=False)."""
         resp = await self.client.embeddings.create(
             model=self.model,
             input=query,
@@ -77,27 +77,27 @@ class DomainEmbedder:
         return resp.data[0].embedding
 
     # ─────────────────────────────────────────
-    # HyDE查询扩展Embedding（★核心优化）
+    # HyDE query expansion embedding (★ core optimization)
     # ─────────────────────────────────────────
     async def embed_query_with_hyde(self, query: str) -> list[float]:
         """
-        HyDE流程：
-        1. 用gpt-4o-mini生成假设性答案（~100ms额外延迟）
-        2. 将 query + 假设答案 拼接，做embedding
-        3. 拼接后的向量更接近文档空间，召回率提升
+        HyDE workflow:
+        1. Generate a hypothetical answer with gpt-4o-mini (~100ms additional latency)
+        2. Concatenate query + hypothetical answer and embed the result
+        3. The combined vector is closer to document space, improving recall
 
-        额外延迟约100ms，但NDCG@10从0.76提升到0.83（+9%），值得。
-        helpdesk场景(use_hyde=False)跳过此步，因为工单查询本身很具体。
+        Adds about 100ms, but improves NDCG@10 from 0.76 to 0.83 (+9%), making it worthwhile.
+        The helpdesk use case (use_hyde=False) skips this step because ticket queries are already specific.
         """
-        # Step 1: 并行无需等待——先发出embedding请求的同时生成假设答案
-        # 注意：必须先有假设答案才能embed，所以是串行的
-        # 但生成假设答案本身很短（max_tokens=150），延迟可控
+        # Step 1: Run in parallel without waiting—send the embedding request while generating the hypothetical answer
+        # Note: embedding requires the hypothetical answer first, so execution is sequential
+        # The hypothetical answer is short (max_tokens=150), keeping latency manageable
         hypothesis = await self._generate_hypothesis(query)
 
-        # Step 2: 拼接原始查询 + 假设答案
-        enriched_input = f"问题：{query}\n\n参考答案：{hypothesis}"
+        # Step 2: Concatenate the original query + hypothetical answer
+        enriched_input = f"Question: {query}\n\nReference answer: {hypothesis}"
 
-        # Step 3: 对拼接内容做embedding
+        # Step 3: Embed the concatenated content
         resp = await self.client.embeddings.create(
             model=self.model,
             input=enriched_input,
@@ -109,24 +109,24 @@ class DomainEmbedder:
 
     async def _generate_hypothesis(self, query: str) -> str:
         """
-        用LLM快速生成假设性答案（不追求准确，只追求语义方向）。
-        使用gpt-4o-mini（速度快、成本低）而非gpt-4o。
+        Quickly generate a hypothetical answer with an LLM (for semantic direction, not accuracy).
+        Use gpt-4o-mini (fast and inexpensive) instead of gpt-4o.
         """
         resp = await self.client.chat.completions.create(
             model=self.hyde_model,
             messages=[{
                 "role": "user",
                 "content": (
-                    f"请用2-3句话简短回答以下问题（仅用于搜索优化，不需要准确）：\n{query}"
+                    f"Please briefly answer the following question in 2-3 sentences (for search optimization only; accuracy is not required):\n{query}"
                 )
             }],
             max_tokens=self.hyde_max_tokens,
-            temperature=0.3,    # 适度多样性，避免过拟合单一答案方向
+            temperature=0.3,    # Moderate diversity to avoid overfitting to a single answer direction
         )
         return resp.choices[0].message.content or ""
 
     # ─────────────────────────────────────────
-    # 批量Embedding（ingestion阶段使用）
+    # Batch embedding (used during ingestion)
     # ─────────────────────────────────────────
     async def embed_documents_batch(
         self,
@@ -134,8 +134,8 @@ class DomainEmbedder:
         batch_size: int = 100,
     ) -> list[list[float]]:
         """
-        批量embedding文档（ingestion时使用，非实时检索路径）。
-        OpenAI API支持单次请求批量embedding，大幅减少API调用次数。
+        Embed documents in batches (during ingestion, outside the real-time retrieval path).
+        The OpenAI API supports batch embedding in a single request, greatly reducing API calls.
         """
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
@@ -145,7 +145,7 @@ class DomainEmbedder:
                 input=batch,
                 dimensions=self.dimensions,
             )
-            # 按index排序确保顺序一致
+            # Sort by index to preserve the order
             batch_embeddings = [
                 e.embedding for e in sorted(resp.data, key=lambda x: x.index)
             ]
@@ -156,10 +156,10 @@ class DomainEmbedder:
         return all_embeddings
 
     # ─────────────────────────────────────────
-    # Document Embedding（向量化子chunk，ingestion流程）
+    # Document embedding (embed child chunks during ingestion)
     # ─────────────────────────────────────────
     async def embed_document(self, text: str) -> list[float]:
-        """单文档embedding（用于实时更新单条文档）。"""
+        """Embed a single document (for real-time updates to individual documents)."""
         resp = await self.client.embeddings.create(
             model=self.model,
             input=text,

@@ -1,10 +1,10 @@
 """
 ingestion/ingest.py
 -------------------
-文档摄入脚本：将企业文档处理后写入Qdrant向量库。
-支持PDF、TXT、DOCX（需要langchain-community）。
+Document ingestion script: process enterprise documents and store them in the Qdrant vector database.
+Supports PDF, TXT, and DOCX (requires langchain-community).
 
-使用方式：
+Usage:
     python -m ingestion.ingest \
         --use_case kb_qa \
         --tenant_id acme_corp \
@@ -33,8 +33,8 @@ logging.basicConfig(level=logging.INFO)
 
 class DocumentIngester:
     """
-    文档摄入器：文件读取 → 分块 → 向量化 → 写入Qdrant
-    支持Hierarchical chunking（子chunk存向量，父chunk存payload）
+    Document ingester: read files → chunk → embed → write to Qdrant
+    Supports hierarchical chunking (child chunks stored as vectors, parent chunks in payloads)
     """
 
     def __init__(
@@ -50,7 +50,7 @@ class DocumentIngester:
         )
 
     def _ensure_collection(self, collection_name: str, vector_size: int = 1536):
-        """确保Qdrant collection存在，不存在则创建。"""
+        """Ensure the Qdrant collection exists, creating it if necessary."""
         existing = {c.name for c in self.qdrant.get_collections().collections}
         if collection_name not in existing:
             self.qdrant.create_collection(
@@ -63,12 +63,12 @@ class DocumentIngester:
             logger.info(f"Created collection: {collection_name}")
 
     def _read_file(self, filepath: Path) -> str:
-        """读取文件内容（支持txt/md，其他格式可扩展）。"""
+        """Read file contents (supports txt/md; can be extended to other formats)."""
         suffix = filepath.suffix.lower()
         if suffix in [".txt", ".md"]:
             return filepath.read_text(encoding="utf-8")
         elif suffix == ".pdf":
-            # 需要: pip install pypdf
+            # Requires: pip install pypdf
             from pypdf import PdfReader
             reader = PdfReader(str(filepath))
             return "\n\n".join(
@@ -76,7 +76,7 @@ class DocumentIngester:
                 if page.extract_text()
             )
         elif suffix in [".docx"]:
-            # 需要: pip install python-docx
+            # Requires: pip install python-docx
             from docx import Document as DocxDocument
             doc = DocxDocument(str(filepath))
             return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
@@ -92,8 +92,8 @@ class DocumentIngester:
         batch_size: int = 50,
     ):
         """
-        批量摄入目录下的所有文档。
-        use_case决定分块策略和collection名称。
+        Ingest all documents in a directory in batches.
+        use_case determines the chunking strategy and collection name.
         """
         config = get_config(use_case)
         collection_name = f"enterprise_{use_case}"
@@ -128,12 +128,12 @@ class DocumentIngester:
 
         logger.info(f"Total chunks to ingest: {len(all_chunks)}")
 
-        # 批量向量化
+        # Batch embedding
         texts = [c.page_content for c in all_chunks]
         logger.info("Embedding chunks (batch mode)...")
         embeddings = await self.embedder.embed_documents_batch(texts, batch_size=100)
 
-        # 批量写入Qdrant
+        # Write to Qdrant in batches
         points = []
         for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings)):
             point = PointStruct(
@@ -141,7 +141,7 @@ class DocumentIngester:
                 vector=embedding,
                 payload={
                     "text": chunk.page_content,
-                    "parent_text": chunk.parent_text,      # 父chunk（Hierarchical核心）
+                    "parent_text": chunk.parent_text,      # Parent chunk (core of hierarchical chunking)
                     "parent_id": chunk.parent_id,
                     "source": chunk.metadata.get("source", ""),
                     "filename": chunk.metadata.get("filename", ""),
@@ -151,7 +151,7 @@ class DocumentIngester:
             )
             points.append(point)
 
-            # 批量上传
+            # Upload in batches
             if len(points) >= batch_size:
                 self.qdrant.upsert(collection_name=collection_name, points=points)
                 logger.info(f"  Uploaded {i+1}/{len(all_chunks)} chunks")
@@ -165,7 +165,7 @@ class DocumentIngester:
 
 
 # ─────────────────────────────────────────────────────
-# CLI入口
+# CLI entry point
 # ─────────────────────────────────────────────────────
 async def main():
     parser = argparse.ArgumentParser(description="Enterprise RAG Document Ingester")

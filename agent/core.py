@@ -1,8 +1,8 @@
 """
 agent/core.py
 -------------
-EnterpriseRAGAgent：核心Agent类，串联检索→生成全流程。
-对应简历：production-ready LLM-based agent with RAG retrieval pipelines
+EnterpriseRAGAgent: Core agent class connecting the full retrieval → generation workflow.
+Resume reference: production-ready LLM-based agent with RAG retrieval pipelines
 """
 
 import time
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class Document:
-    """简化的文档数据类（实际项目中来自LangChain或自定义）"""
+    """Simplified document data class (from LangChain or custom-built in real projects)."""
     def __init__(self, page_content: str, metadata: dict = None):
         self.page_content = page_content
         self.metadata = metadata or {}
@@ -23,19 +23,19 @@ class Document:
 
 class EnterpriseRAGAgent:
     """
-    生产级RAG Agent。
-    - 支持多租户隔离（tenant_id过滤）
-    - 支持流式输出（stream=True）
-    - 集成语义缓存、检索流水线、LLM生成
-    - 通过AgentConfig实现configurable business logic
+    Production-grade RAG agent.
+    - Supports multi-tenant isolation (tenant_id filtering)
+    - Supports streaming output (stream=True)
+    - Integrates semantic caching, retrieval pipelines, and LLM generation
+    - Implements configurable business logic through AgentConfig
     """
 
     def __init__(
         self,
         config: AgentConfig,
-        retriever,       # OptimizedRAGPipeline实例
-        llm_client,      # LLMClient实例
-        cache,           # SemanticCache实例
+        retriever,       # OptimizedRAGPipeline instance
+        llm_client,      # LLMClient instance
+        cache,           # SemanticCache instance
     ):
         self.config = config
         self.retriever = retriever
@@ -43,23 +43,23 @@ class EnterpriseRAGAgent:
         self.cache = cache
 
     # ─────────────────────────────────────────
-    # 主入口：非流式
+    # Main entry point: non-streaming
     # ─────────────────────────────────────────
     async def run(self, query: str, tenant_id: str) -> dict:
         """
-        完整RAG流程：缓存检查 → 检索 → 生成 → 缓存写入。
-        返回: {answer, sources, latency_ms, from_cache}
+        Full RAG workflow: cache lookup → retrieval → generation → cache write.
+        Returns: {answer, sources, latency_ms, from_cache}
         """
         t0 = time.perf_counter()
 
-        # Step 1: 缓存命中检查（热点查询直接返回）
+        # Step 1: Check for a cache hit (return immediately for popular queries)
         if self.config.cache_enabled:
             cached = await self.cache.get(query, self.config.use_case, tenant_id)
             if cached:
                 logger.info(f"[{self.config.use_case}] Cache hit | query={query[:50]}")
                 return {**cached, "from_cache": True, "latency_ms": 0}
 
-        # Step 2: RAG检索
+        # Step 2: RAG retrieval
         docs = await self.retriever.retrieve(
             query=query,
             tenant_id=tenant_id,
@@ -71,7 +71,7 @@ class EnterpriseRAGAgent:
         )
         logger.info(f"[{self.config.use_case}] Retrieved {len(docs)} docs")
 
-        # Step 3: 构造Prompt上下文
+        # Step 3: Build the prompt context
         context = self._build_context(docs)
         system_prompt = self.config.system_prompt.format(context=context)
         messages = [
@@ -79,7 +79,7 @@ class EnterpriseRAGAgent:
             {"role": "user", "content": query},
         ]
 
-        # Step 4: LLM生成（非流式）
+        # Step 4: LLM generation (non-streaming)
         answer = await self.llm.generate(
             messages=messages,
             model=self.config.llm_model,
@@ -98,7 +98,7 @@ class EnterpriseRAGAgent:
             "from_cache": False,
         }
 
-        # Step 5: 写入缓存
+        # Step 5: Write to cache
         if self.config.cache_enabled:
             await self.cache.set(
                 query, self.config.use_case, tenant_id,
@@ -108,16 +108,16 @@ class EnterpriseRAGAgent:
         return result
 
     # ─────────────────────────────────────────
-    # 流式入口（Server-Sent Events）
+    # Streaming entry point (Server-Sent Events)
     # ─────────────────────────────────────────
     async def run_stream(
         self, query: str, tenant_id: str
     ) -> AsyncIterator[str]:
         """
-        流式RAG：检索完成后开始流式生成，首token延迟<500ms。
-        使用方式：async for token in agent.run_stream(query, tenant_id)
+        Streaming RAG: start streaming generation after retrieval, with first-token latency <500ms.
+        Usage: async for token in agent.run_stream(query, tenant_id)
         """
-        # 检索（同上，非流式）
+        # Retrieval (same as above, non-streaming)
         docs = await self.retriever.retrieve(
             query=query,
             tenant_id=tenant_id,
@@ -135,7 +135,7 @@ class EnterpriseRAGAgent:
             {"role": "user", "content": query},
         ]
 
-        # 流式LLM生成
+        # Streaming LLM generation
         async for token in self.llm.stream_generate(
             messages=messages,
             model=self.config.llm_model,
@@ -145,25 +145,25 @@ class EnterpriseRAGAgent:
             yield token
 
     # ─────────────────────────────────────────
-    # 辅助方法
+    # Helper methods
     # ─────────────────────────────────────────
     def _build_context(self, docs: list[Document]) -> str:
         """
-        将检索到的文档列表拼接成结构化上下文字符串。
-        Hierarchical chunking场景下，这里返回的是父chunk内容（更完整）。
+        Join retrieved documents into a structured context string.
+        With hierarchical chunking, this returns parent chunk content (more complete).
         """
         if not docs:
-            return "（未检索到相关文档）"
+            return "(No relevant documents retrieved)"
         parts = []
         for i, doc in enumerate(docs, 1):
-            source = doc.metadata.get("source", "未知来源")
+            source = doc.metadata.get("source", "Unknown source")
             page = doc.metadata.get("page", "")
-            header = f"[来源{i}] {source}" + (f" | 第{page}页" if page else "")
+            header = f"[Source{i}] {source}" + (f" | Page {page}" if page else "")
             parts.append(f"{header}\n{doc.page_content}")
         return "\n\n---\n\n".join(parts)
 
     def _format_sources(self, docs: list[Document]) -> list[dict]:
-        """返回结构化的来源列表，供前端渲染引用角标。"""
+        """Return a structured source list for rendering citation markers in the frontend."""
         return [
             {
                 "index": i + 1,

@@ -1,13 +1,13 @@
 """
 evaluation/chunking_ab_test.py
 ------------------------------
-分块策略A/B对比实验脚本。
-复现简历中的实验数据：
+A/B comparison script for chunking strategies.
+Reproduce the experimental results cited in the resume:
   Fixed 512chars → Recall@5 = 0.61 (baseline)
   Sentence-aware → Recall@5 = 0.74 (+21%)
-  Hierarchical   → Recall@5 = 0.78 (+28%)  ← 最终选择
+  Hierarchical   → Recall@5 = 0.78 (+28%)  ← Final choice
 
-使用方式：
+Usage:
     python -m evaluation.chunking_ab_test
 """
 
@@ -26,17 +26,17 @@ logging.basicConfig(level=logging.INFO)
 @dataclass
 class ChunkingExperimentResult:
     strategy: str
-    n_chunks: float           # 平均chunk数（每文档）
-    avg_chunk_len: float      # 平均chunk长度
-    simulated_recall: float   # 模拟Recall@5（基于chunk粒度估算）
-    coverage: float           # 内容覆盖率（无信息丢失比例）
+    n_chunks: float           # Average number of chunks per document
+    avg_chunk_len: float      # Average chunk length
+    simulated_recall: float   # Simulated Recall@5 (estimated from chunk granularity)
+    coverage: float           # Content coverage (proportion retained without information loss)
 
 
 def simulate_recall(chunks, query_keywords: list[str], k: int = 5) -> float:
     """
-    模拟Recall@5：
-    在top-k个chunk里，检查包含query关键词的chunk数 / 总相关chunk数。
-    （真实实验需要embedding + 向量检索，此处用关键词匹配近似）
+    Simulate Recall@5:
+    Count chunks containing query keywords in the top-k chunks / total relevant chunks.
+    (A real experiment requires embeddings + vector search; keyword matching approximates it here.)
     """
     relevant_chunks = [
         c for c in chunks
@@ -45,8 +45,8 @@ def simulate_recall(chunks, query_keywords: list[str], k: int = 5) -> float:
     if not relevant_chunks:
         return 1.0
 
-    # 模拟：假设向量检索能找到内容最相关的chunk
-    # 关键词密度越高的chunk，向量检索排名越靠前
+    # Simulation: assume vector search finds the chunks with the most relevant content
+    # Chunks with higher keyword density rank higher in vector search
     def keyword_density(chunk) -> float:
         text = chunk.page_content.lower()
         return sum(text.count(kw.lower()) for kw in query_keywords) / max(len(text), 1)
@@ -68,7 +68,7 @@ def run_chunking_experiment(
     strategies: list[str],
     query_keywords: list[str],
 ) -> list[ChunkingExperimentResult]:
-    """对多个分块策略运行对比实验。"""
+    """Run a comparison experiment across multiple chunking strategies."""
     chunker = AdaptiveChunker(chunk_size=512, chunk_overlap=64)
     results = []
 
@@ -84,7 +84,7 @@ def run_chunking_experiment(
         )
         avg_n_chunks = len(all_chunks) / len(sample_texts)
 
-        # 计算模拟Recall（每个文档独立计算后平均）
+        # Calculate simulated recall (compute independently per document, then average)
         recalls = []
         for text in sample_texts:
             chunks = chunker.chunk(text, metadata={"source": "test"}, strategy=strategy)
@@ -92,13 +92,13 @@ def run_chunking_experiment(
             recalls.append(recall)
         avg_recall = sum(recalls) / len(recalls) if recalls else 0
 
-        # 覆盖率：检查分块后内容是否完整（无截断丢失）
+        # Coverage: check whether content remains intact after chunking (no truncation loss)
         original_total = sum(len(t) for t in sample_texts)
         chunked_total = sum(
             len(chunker.chunk(t, strategy=strategy, metadata={}))
             for t in sample_texts
         )
-        # 简化：chunk数量越多，覆盖率越完整（近似）
+        # Simplification: more chunks mean more complete coverage (approximation)
         coverage = min(1.0, avg_n_chunks / 10)
 
         results.append(ChunkingExperimentResult(
@@ -113,39 +113,39 @@ def run_chunking_experiment(
 
 
 def generate_sample_docs(n: int = 20, length: int = 3000) -> list[str]:
-    """生成模拟企业文档（含结构化段落）。"""
+    """Generate mock enterprise documents with structured paragraphs."""
     topics = [
-        "员工手册第三章：休假制度。\n\n年假政策：入职满一年的员工享有5天带薪年假，"
-        "满三年后增至10天，满十年后增至15天。员工需提前两周申请年假，"
-        "经直属上级批准后方可休假。年假不得跨年累计，当年未休完的年假将自动失效。\n\n"
-        "病假政策：员工因病需要休假时，须提供医院诊断证明。"
-        "连续病假超过3天需提交三甲医院证明。病假期间工资按基本工资的80%发放。\n\n"
-        "事假政策：事假不超过3天可由部门经理审批，超过3天需人力资源部审批。"
-        "事假期间不计发工资。",
+        "Employee Handbook, Chapter Three: Leave Rules.\n\nAnnual leave policy: Employees with one year of service receive 5 days of paid annual leave, "
+        "increasing to 10 days after three years and 15 days after ten years. Employees must submit an application for annual leave two weeks in advance "
+        "and obtain approval from their direct supervisor before taking leave. Annual leave cannot be carried over to the next year; unused leave automatically expires at year-end.\n\n"
+        "Sick leave policy: Employees taking leave due to illness must provide a medical certificate from a hospital. "
+        "More than 3 consecutive days of sick leave requires a certificate from a Grade III, Class A hospital. Sick leave is paid at 80% of base salary.\n\n"
+        "Personal leave policy: Department managers may grant approval for up to 3 days of personal leave; more than 3 days requires approval from Human Resources. "
+        "Personal leave is unpaid.",
 
-        "IT支持手册：常见故障排查指南。\n\n"
-        "1. 无法登录企业系统：首先检查网络连接，确认VPN已连接。"
-        "如问题持续，请联系IT帮助台重置密码。\n\n"
-        "2. VPN连接失败：检查VPN客户端版本，确保使用最新版本。"
-        "尝试切换服务器节点。如仍无法连接，请提交工单。\n\n"
-        "3. 邮件发送失败：检查收件人地址格式，确认附件大小不超过25MB。"
-        "清除邮件客户端缓存后重试。",
+        "IT Support Manual: Common Troubleshooting Guide.\n\n"
+        "1. Unable to log in to enterprise systems: First check your network connection and confirm that the VPN is connected. "
+        "If the issue persists, contact the IT help desk to reset your password.\n\n"
+        "2. VPN connection failure: Check your VPN client version and ensure you are using the latest version. "
+        "Try switching server nodes. If you still cannot connect, submit a support ticket.\n\n"
+        "3. Email sending failure: Check the recipient address format and confirm that attachments do not exceed 25MB. "
+        "Clear the email client's cache and try again.",
 
-        "合同审查标准：保密协议条款规范。\n\n"
-        "根据《中华人民共和国合同法》第四十条规定，保密协议中的保密期限应明确约定。"
-        "建议保密期限不超过3年，超过此期限的条款可能被认定为显失公平。\n\n"
-        "竞业禁止条款：竞业禁止期限一般不超过2年，"
-        "且企业需支付相应的经济补偿（通常为离职前12个月平均工资的30%以上）。\n\n"
-        "违约金条款：违约金金额应与实际损失相当，"
-        "过高的违约金条款可能被法院酌情调整。",
+        "Contract Review Standards: Requirements for Confidentiality Agreement Clauses.\n\n"
+        "Under Article Forty of the Contract Law of the People's Republic of China, confidentiality agreements must explicitly specify the confidentiality period. "
+        "A confidentiality period of no more than 3 years is recommended; clauses exceeding this period may be deemed manifestly unfair.\n\n"
+        "Non-compete clauses: The non-compete period generally should not exceed 2 years, "
+        "and the company must pay corresponding financial compensation (usually at least 30% of the average salary over the 12 months before departure).\n\n"
+        "Liquidated damages clauses: The amount of liquidated damages should be comparable to actual losses; "
+        "courts may adjust excessively high liquidated damages at their discretion.",
     ]
 
     docs = []
     for i in range(n):
         base = topics[i % len(topics)]
-        # 加入一些随机内容模拟文档长度
+        # Add random content to simulate document length
         padding = " ".join(
-            f"附加条款{j}：相关规定参见公司内部管理制度第{random.randint(1,50)}条。"
+            f"Additional clause {j}: For related provisions, see Article {random.randint(1,50)} of the company's internal management rules."
             for j in range(length // 100)
         )
         docs.append(base + "\n\n" + padding)
@@ -153,7 +153,7 @@ def generate_sample_docs(n: int = 20, length: int = 3000) -> list[str]:
 
 
 def print_experiment_results(results: list[ChunkingExperimentResult]):
-    """打印对比表格。"""
+    """Print a comparison table."""
     print("\n" + "="*65)
     print("  Chunking Strategy A/B Test Results")
     print("="*65)
@@ -169,7 +169,7 @@ def print_experiment_results(results: list[ChunkingExperimentResult]):
             pct = (r.simulated_recall - baseline_recall) / baseline_recall * 100
             improvement = f"+{pct:.0f}%" if pct > 0 else f"{pct:.0f}%"
 
-        marker = " ← 最终选择" if r.strategy == "hierarchical" else ""
+        marker = " ← Final choice" if r.strategy == "hierarchical" else ""
         print(f"  {r.strategy:<20} {r.simulated_recall:>10.3f} "
               f"{r.avg_n_chunks:>12.1f} {r.avg_chunk_len:>10.0f}  "
               f"({improvement}){marker}")
@@ -179,7 +179,7 @@ def print_experiment_results(results: list[ChunkingExperimentResult]):
 if __name__ == "__main__":
     print("Generating sample enterprise documents...")
     sample_docs = generate_sample_docs(n=20)
-    query_keywords = ["年假", "政策", "员工", "申请", "审批"]
+    query_keywords = ["annual leave", "policy", "employee", "application", "approval"]
 
     print("Running A/B test across chunking strategies...")
     results = run_chunking_experiment(
@@ -189,5 +189,5 @@ if __name__ == "__main__":
     )
 
     print_experiment_results(results)
-    print("结论：Hierarchical分块在Recall@5上表现最优，")
-    print("      子chunk精准检索 + 父chunk完整上下文，是最终生产方案。\n")
+    print("Conclusion: Hierarchical chunking performs best on Recall@5;")
+    print("      precise retrieval with child chunks + full context from parent chunks is the final production approach.\n")

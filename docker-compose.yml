@@ -1,6 +1,6 @@
 # docker-compose.yml
-# 本地开发环境：启动 Qdrant + Redis 基础设施
-# 使用方式：docker-compose up -d
+# Local development environment: start Qdrant and Redis infrastructure
+# Usage: docker-compose up -d
 
 version: "3.9"
 
@@ -41,7 +41,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # 可选：本地运行RAG API服务（需要先build镜像）
+  # Optional: run the RAG API locally (build the image first)
   # rag_api:
   #   build: .
   #   container_name: rag_api

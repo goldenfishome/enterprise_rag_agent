@@ -1,8 +1,8 @@
 """
 agent/factory.py
 ----------------
-AgentFactory：依赖注入工厂，根据use_case组装Agent实例。
-生产环境中使用单例模式复用连接池，避免重复创建客户端。
+AgentFactory: Dependency injection factory that assembles agent instances by use_case.
+Uses singletons in production to reuse connection pools and avoid recreating clients.
 """
 
 import os
@@ -17,7 +17,7 @@ from llm.client import LLMClient
 
 
 # ─────────────────────────────────────────────
-# 单例组件（全局共享，避免重复建连接池）
+# Singleton components (shared globally to avoid recreating connection pools)
 # ─────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -52,13 +52,13 @@ def get_shared_reranker() -> TwoStageRetriever:
 
 
 # ─────────────────────────────────────────────
-# Agent工厂
+# Agent factory
 # ─────────────────────────────────────────────
 
 class AgentFactory:
     """
-    根据use_case字符串组装完整的EnterpriseRAGAgent。
-    所有底层客户端使用单例，只有AgentConfig和Pipeline按场景实例化。
+    Assemble a complete EnterpriseRAGAgent based on the use_case string.
+    All underlying clients are singletons; only AgentConfig and Pipeline are instantiated per use case.
     """
 
     @staticmethod
@@ -68,14 +68,14 @@ class AgentFactory:
         """
         config: AgentConfig = get_config(use_case)
 
-        # Qdrant向量库连接（每个use_case对应独立collection）
+        # Qdrant vector store connection (a separate collection for each use_case)
         from qdrant_client import QdrantClient
         qdrant_client = QdrantClient(
             url=qdrant_url or os.getenv("QDRANT_URL", "http://localhost:6333")
         )
         collection_name = f"enterprise_{use_case}"
 
-        # 检索流水线（包含embedder + reranker）
+        # Retrieval pipeline (includes embedder + reranker)
         pipeline = OptimizedRAGPipeline(
             qdrant_client=qdrant_client,
             collection_name=collection_name,
@@ -92,7 +92,7 @@ class AgentFactory:
 
     @staticmethod
     def create_all() -> dict[str, EnterpriseRAGAgent]:
-        """预热所有use_case的Agent（服务启动时调用）。"""
+        """Warm up agents for all use cases (called at service startup)."""
         return {
             use_case: AgentFactory.create(use_case)
             for use_case in ["kb_qa", "helpdesk", "compliance"]

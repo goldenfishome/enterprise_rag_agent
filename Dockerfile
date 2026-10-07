@@ -1,5 +1,5 @@
 # Dockerfile
-# 多阶段构建，减小镜像体积
+# Multi-stage build to reduce image size
 
 FROM python:3.11-slim AS builder
 
@@ -12,20 +12,20 @@ FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# 复制依赖
+# Copy dependencies
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
-# 复制项目代码
+# Copy project code
 COPY . .
 
-# 非root用户运行（安全最佳实践）
+# Run as a non-root user (security best practice)
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
 EXPOSE 8000
 
-# 生产启动：uvicorn多进程
+# Production startup with multiple Uvicorn workers
 CMD ["uvicorn", "api.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \

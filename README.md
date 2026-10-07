@@ -1,45 +1,45 @@
 # Enterprise RAG Agent Platform
 
-生产级多场景LLM Agent，面向企业客户，支持3个业务场景。
+Production-grade LLM agent platform for enterprise clients, supporting three business use cases.
 
-## 项目结构
+## Project Structure
 
 ```
 enterprise_rag_agent/
 ├── agent/
-│   ├── core.py          # Agent基类 + 主流程
-│   └── factory.py       # Agent工厂
+│   ├── core.py          # Core agent class and main workflow
+│   └── factory.py       # Agent factory
 ├── retrieval/
-│   ├── pipeline.py      # 异步并行RAG检索流水线
-│   └── reranker.py      # 两阶段Rerank
+│   ├── pipeline.py      # Asynchronous parallel RAG retrieval pipeline
+│   └── reranker.py      # Two-stage reranking
 ├── ingestion/
-│   ├── chunker.py       # Hierarchical分块策略
-│   └── embedder.py      # HyDE embedding优化
+│   ├── chunker.py       # Hierarchical chunking strategy
+│   └── embedder.py      # HyDE embedding optimization
 ├── cache/
-│   └── semantic_cache.py # Redis语义缓存
+│   └── semantic_cache.py # Redis query cache
 ├── llm/
-│   └── client.py        # LLM客户端（连接池+流式）
+│   └── client.py        # LLM client with connection pooling and streaming
 ├── config/
-│   └── use_cases.py     # 3个业务场景配置
+│   └── use_cases.py     # Configuration for three business use cases
 ├── api/
-│   └── main.py          # FastAPI入口
+│   └── main.py          # FastAPI entry point
 ├── evaluation/
-│   └── evaluator.py     # 检索效果评估（幻觉率/相关性）
+│   └── evaluator.py     # Retrieval evaluation: hallucination rate and relevance
 ├── tests/
-│   └── load_test.py     # Locust并发压测
+│   └── load_test.py     # Concurrent load testing with Locust
 └── requirements.txt
 ```
 
-## 快速启动
+## Quick Start
 
 ```bash
 pip install -r requirements.txt
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
-## 三条简历对应关系
+## Mapping to Three Resume Highlights
 
-| 简历内容 | 代码文件 |
+| Resume highlight | Code files |
 |----------|----------|
 | 3 distinct use cases + configurable logic | config/use_cases.py, agent/core.py |
 | 20% latency reduction + 2s P50 | retrieval/pipeline.py, cache/semantic_cache.py, llm/client.py |

@@ -1,8 +1,8 @@
 """
 api/main.py
 -----------
-FastAPI入口：定义REST API接口，管理Agent生命周期。
-支持：普通响应 / 流式SSE响应 / 健康检查 / 监控指标
+FastAPI entry point: defines REST API endpoints and manages the agent lifecycle.
+Supports: standard responses / streaming SSE responses / health checks / monitoring metrics
 """
 
 import logging
@@ -25,25 +25,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────
-# 全局Agent注册表（服务启动时预热，避免首请求冷启动）
+# Global agent registry (warmed up at service startup to avoid a cold start on the first request)
 # ─────────────────────────────────────────────────────
 _agents: dict = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """服务启动/关闭生命周期管理。"""
+    """Manage the service startup/shutdown lifecycle."""
     logger.info("Initializing agents for all use cases...")
     try:
         _agents.update(AgentFactory.create_all())
         logger.info(f"Agents ready: {list(_agents.keys())}")
     except Exception as e:
         logger.error(f"Agent initialization failed: {e}")
-        # 生产环境：启动失败应该告警，此处不阻断服务启动
+        # In production, startup failures should trigger alerts; service startup is not blocked here
 
-    yield  # 服务运行中
+    yield  # Service is running
 
-    # 关闭时清理资源
+    # Clean up resources on shutdown
     from agent.factory import get_shared_cache
     try:
         await get_shared_cache().close()
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 # ─────────────────────────────────────────────────────
 app = FastAPI(
     title="Enterprise RAG Agent API",
-    description="生产级多场景LLM Agent，支持kb_qa / helpdesk / compliance",
+    description="Production-grade LLM agent for multiple use cases, supporting kb_qa / helpdesk / compliance",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -71,19 +71,19 @@ app.add_middleware(
 
 
 # ─────────────────────────────────────────────────────
-# Request / Response 模型
+# Request / Response models
 # ─────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=2000, description="用户查询")
-    use_case: str = Field(..., description="业务场景: kb_qa | helpdesk | compliance")
-    tenant_id: str = Field(..., description="企业租户ID，用于数据隔离")
-    stream: bool = Field(False, description="是否流式输出")
+    query: str = Field(..., min_length=1, max_length=2000, description="User query")
+    use_case: str = Field(..., description="Business use case: kb_qa | helpdesk | compliance")
+    tenant_id: str = Field(..., description="Enterprise tenant ID for data isolation")
+    stream: bool = Field(False, description="Whether to stream output")
 
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "员工年假政策是什么？",
+                "query": "What is the employee annual leave policy?",
                 "use_case": "kb_qa",
                 "tenant_id": "acme_corp",
                 "stream": False,
@@ -106,28 +106,28 @@ class HealthResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────
-# 服务启动时间（用于uptime计算）
+# Service start time (used to calculate uptime)
 # ─────────────────────────────────────────────────────
 _start_time = time.time()
 
 
 # ─────────────────────────────────────────────────────
-# API 接口
+# API endpoints
 # ─────────────────────────────────────────────────────
 
 @app.post("/v1/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """
-    主聊天接口（非流式）。
-    - 自动路由到对应use_case的Agent
-    - 集成缓存、检索、生成全流程
-    - 目标P50延迟 ≤ 2000ms
+    Main chat endpoint (non-streaming).
+    - Automatically routes to the agent for the corresponding use_case
+    - Integrates the full caching, retrieval, and generation workflow
+    - Target P50 latency ≤ 2000ms
     """
     if req.use_case not in _agents:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的use_case: {req.use_case}。"
-                   f"可用场景: {list(_agents.keys())}"
+            detail=f"Unsupported use_case: {req.use_case}. "
+                   f"Available use cases: {list(_agents.keys())}"
         )
 
     agent = _agents[req.use_case]
@@ -139,28 +139,28 @@ async def chat(req: ChatRequest):
         return ChatResponse(**result)
     except Exception as e:
         logger.error(f"Agent error | use_case={req.use_case} | error={e}")
-        raise HTTPException(status_code=500, detail=f"Agent执行失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent execution failed: {str(e)}")
 
 
 @app.post("/v1/chat/stream")
 async def chat_stream(req: ChatRequest):
     """
-    流式聊天接口（Server-Sent Events）。
-    首token延迟目标 < 500ms，适合实时交互场景（如帮助台）。
+    Streaming chat endpoint (Server-Sent Events).
+    Target first-token latency < 500ms, suitable for real-time interaction (such as a helpdesk).
 
-    前端消费示例：
+    Frontend consumption example:
         const es = new EventSource('/v1/chat/stream');
         es.onmessage = (e) => appendToUI(e.data);
     """
     if req.use_case not in _agents:
-        raise HTTPException(status_code=400, detail=f"不支持的use_case: {req.use_case}")
+        raise HTTPException(status_code=400, detail=f"Unsupported use_case: {req.use_case}")
 
     agent = _agents[req.use_case]
 
     async def event_generator():
         try:
             async for token in agent.run_stream(req.query, req.tenant_id):
-                # SSE格式：data: <token>\n\n
+                # SSE format: data: <token>\n\n
                 yield f"data: {token}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
@@ -172,14 +172,14 @@ async def chat_stream(req: ChatRequest):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # Nginx不缓冲SSE
+            "X-Accel-Buffering": "no",  # Disable Nginx buffering for SSE
         },
     )
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """健康检查接口（供K8s liveness probe使用）。"""
+    """Health check endpoint (for the K8s liveness probe)."""
     return HealthResponse(
         status="healthy",
         agents_ready=list(_agents.keys()),
@@ -190,8 +190,8 @@ async def health():
 @app.get("/metrics")
 async def metrics():
     """
-    延迟指标接口（供Prometheus/Grafana抓取）。
-    生产环境建议改用 prometheus_fastapi_instrumentator。
+    Latency metrics endpoint (for Prometheus/Grafana scraping).
+    In production, switching to prometheus_fastapi_instrumentator is recommended.
     """
     from agent.factory import get_shared_llm_client
 
@@ -215,8 +215,8 @@ async def metrics():
 @app.delete("/cache/{use_case}/{tenant_id}")
 async def invalidate_cache(use_case: str, tenant_id: str):
     """
-    使某个租户的缓存失效（文档更新后调用）。
-    例：PUT /documents 成功后自动触发此接口。
+    Invalidate the cache for a tenant (called after document updates).
+    Example: automatically trigger this endpoint after a successful PUT /documents.
     """
     from agent.factory import get_shared_cache
     deleted = await get_shared_cache().invalidate(use_case, tenant_id)
@@ -224,7 +224,7 @@ async def invalidate_cache(use_case: str, tenant_id: str):
 
 
 # ─────────────────────────────────────────────────────
-# 启动入口
+# Startup entry point
 # ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
@@ -232,7 +232,7 @@ if __name__ == "__main__":
         "api.main:app",
         host="0.0.0.0",
         port=8000,
-        workers=4,             # 多进程（CPU密集型任务）
-        loop="uvloop",         # 更快的事件循环
+        workers=4,             # Multiple processes (CPU-intensive tasks)
+        loop="uvloop",         # Faster event loop
         log_level="info",
     )
